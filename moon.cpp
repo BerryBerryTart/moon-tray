@@ -8,10 +8,16 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <time.h>
 
 const double RAD = M_PI / 180.0;
 const double DEG = 180 / M_PI;
 const int DEBUG = 0;
+const double LATITUDE = 53.400002;
+const double LONGITUDE = 2.983333;
 
 struct Moon
 {
@@ -19,12 +25,30 @@ struct Moon
   std::string phase;
   double azimuth;
   double altitude;
+  std::string transit;
+  std::string rise;
+  std::string set;
 };
 
 struct MoonPos
 {
   double azimuth;
   double altitude;
+  double i;
+  double parallax;
+  double RA;
+  double Decl;
+  double RA_p1;   // minus a day
+  double Decl_p1; // minus a day
+  double RA_m1;   // plus a day
+  double Decl_m1; // plus a day
+};
+
+struct MoonRiseSet
+{
+  std::string transit;
+  std::string rise;
+  std::string set;
 };
 
 struct SumLR
@@ -37,27 +61,10 @@ struct JDTime
 {
   double JDNow;
   double JDT;
+  double JDNow_Midnight;
+  double JDT_Midnight;
+  double Sidereal_Midnight;
 };
-
-// time in Julian Centuries from Epick J2000.0
-JDTime julianDate()
-{
-  JDTime jd;
-  std::time_t unixTime = std::time(nullptr);
-  double JDNow = ((double)(unixTime) / 86400.0) + 2440587.5;
-
-  // jgiesen.de
-  // JDNow = 2448396.04167;
-
-  // Astronomical Algo
-  // JDNow = 2448724.5;
-  const double JD2000 = 2451545.0;
-  const double result = (JDNow - JD2000) / 36525.0;
-
-  jd.JDNow = JDNow;
-  jd.JDT = result;
-  return jd;
-}
 
 double constrain(double d)
 {
@@ -69,21 +76,102 @@ double constrain(double d)
   return t;
 }
 
-double getMoonCoef()
+double constrain180(double d)
 {
-  const JDTime JD = julianDate();
-  const double T = JD.JDT;
-  double D = 297.8501921 + 445267.1114034 * T - 0.0018819 * std::pow(T, 2) + (1.0 / 545868.0) * std::pow(T, 3) - (1 / 113065000.0) * std::pow(T, 4);
-  double M = 357.5291092 + 35999.0502909 * T - 0.0001536 * std::pow(T, 2) + (1.0 / 24490000.0) * std::pow(T, 3);
-  double Mp = 134.9633964 + 477198.8675055 * T + 0.0087414 * std::pow(T, 2) + (1.0 / 69699.0) * std::pow(T, 3) - (1 / 14712000.0) * std::pow(T, 4);
+  double t = std::fmod(d, 180.0);
+  if (t < 0)
+  {
+    t += 180;
+  }
+  return t;
+}
 
-  D = constrain(D) * RAD;
-  M = constrain(M) * RAD;
-  Mp = constrain(Mp) * RAD;
+double constrain1(double d)
+{
+  double t = d;
+  if (t < 0)
+  {
+    t += 1;
+  }
+  return t;
+}
 
-  double i = 180.0 - D * DEG - 6.289 * std::sin(Mp) + 2.1 * std::sin(M) - 1.274 * std::sin(2 * D - Mp) - 0.658 * std::sin(2 * D) - 0.214 * std::sin(2 * Mp) - 0.11 * std::sin(D);
-  i = constrain(i) * RAD;
-  return i;
+// time in Julian Centuries from Epick J2000.0
+JDTime julianDate(int offset = 0)
+{
+  JDTime jd;
+  std::time_t unixTime = std::time(nullptr);
+  double JDNow = ((double)unixTime / 86400.0) + 2440587.5;
+
+  // jgiesen.de
+  // JDNow = 2448396.04167;
+
+  // Astronomical Algo
+  // JDNow = 2448724.5;
+  const double JD2000 = 2451545.0;
+  const double T = (JDNow - JD2000) / 36525.0;
+
+  // get sidereal time at 0h
+
+  // get local day, month and year
+  struct std::tm *t = localtime(&unixTime);
+
+  int day = t->tm_mday;
+  int month = t->tm_mon + 1;
+  int year = t->tm_year + 1900;
+
+  std::string day_str = std::to_string(t->tm_mday);
+  if (day < 10)
+  {
+    day_str = "0" + day_str;
+  }
+  std::string month_str = std::to_string(t->tm_mon + 1);
+  if (month < 10)
+  {
+    month_str = "0" + month_str;
+  }
+  std::string year_str = std::to_string(t->tm_year + 1900);
+
+  //  Initialize a string stream
+  std::string dateString = year_str + "-" + month_str + "-" + day_str + " 00:00:00";
+  std::istringstream ss(dateString);
+
+  std::tm midnightToday = {};
+  ss >> std::get_time(&midnightToday, "%Y-%m-%d %H:%M:%S");
+
+  if (ss.fail())
+  {
+    printf("UH OH!!! PARSE TIME FAILED????????\n");
+  }
+
+  double unixMidnight = (double)std::mktime(&midnightToday) + offset * 86400.0;
+  // printf("mn: %lf\n", unixMidnight);
+  double JDMidnight = (unixMidnight / 86400.0) + 2440587.5;
+  // printf("JDM: %lf\n", JDMidnight);
+  const double T_0 = (JDMidnight - JD2000) / 36525.0;
+  double THETA_0 = 100.46061837 + 36000.770053608 * T_0 + 0.000387933 * std::pow(T_0, 2) - (1 / 38710000) * std::pow(T_0, 3);
+
+  jd.JDNow = JDNow;
+  jd.JDT = T;
+  jd.JDNow_Midnight = JDMidnight;
+  jd.JDT_Midnight = T_0;
+  jd.Sidereal_Midnight = constrain(THETA_0);
+  return jd;
+}
+
+std::string timeDecToString(double d)
+{
+  double rawTime = d * 24;
+  int hour = (int)rawTime;
+  double whole;
+  double minute_dec = std::modf(rawTime, &whole);
+  int minute = minute_dec * 60;
+  std::string minute_str = std::to_string(minute);
+  if (minute > 0 && minute < 10)
+  {
+    minute_str = "0" + minute_str;
+  }
+  return std::to_string(hour) + ":" + minute_str;
 }
 
 double moonPercent(double i)
@@ -177,7 +265,7 @@ SumLR getLR(double D, double M, double Mp, double F, double E)
       {2, 0, 0, 2, -1595, 0},
 
       {4, -1, -1, 0, 1215, -3958},
-      {0, 0, 2, 2, -1100, 0},
+      {0, 0, 2, 2, -1110, 0},
       {3, 0, -1, 0, -892, 3258},
       {2, 1, 1, 0, -810, 2616},
       {4, -1, -2, 0, 759, -1897},
@@ -338,11 +426,18 @@ double getB(double D, double M, double Mp, double F, double E)
   return B;
 }
 
-MoonPos getMoonPos()
+MoonPos getMoonPos(JDTime jd_time, int useMidnight = 0)
 {
   MoonPos pos;
-  const JDTime JD = julianDate();
-  const double T = JD.JDT;
+  const JDTime JD = jd_time;
+  double T = JD.JDT;
+  double JDNow = JD.JDNow;
+
+  if (useMidnight)
+  {
+    T = JD.JDT_Midnight;
+    JDNow = JD.JDNow_Midnight;
+  }
 
   double Lp = 218.3164477 + 481267.881234 * T - 0.0015786 * std::pow(T, 2) + (1 / 538841.0) * std::pow(T, 3) - (1 / 65194000.0) * std::pow(T, 4);
   double D = 297.8501921 + 445267.1114034 * T - 0.0018819 * std::pow(T, 2) + (1.0 / 545868.0) * std::pow(T, 3) - (1 / 113065000.0) * std::pow(T, 4);
@@ -366,6 +461,13 @@ MoonPos getMoonPos()
   A2 = constrain(A2);
   A3 = constrain(A3);
 
+  // used for moon phase
+  const double Di = D * RAD;
+  const double Mpi = Mp * RAD;
+  const double Mi = M * RAD;
+  double i = 180.0 - Di * DEG - 6.289 * std::sin(Mpi) + 2.1 * std::sin(Mi) - 1.274 * std::sin(2 * Di - Mpi) - 0.658 * std::sin(2 * Di) - 0.214 * std::sin(2 * Mpi) - 0.11 * std::sin(Di);
+  i = constrain(i) * RAD;
+
   SumLR sumLR = getLR(D * RAD, M * RAD, Mp * RAD, F * RAD, E);
   sumLR.L += 3958 * std::sin(A1 * RAD) + 1962 * std::sin(Lp * RAD - F * RAD) + 318 * std::sin(A2 * RAD);
 
@@ -382,23 +484,24 @@ MoonPos getMoonPos()
   // obliquity of ecliptic
   double EPSILON = 23.439279 - 0.01301 * T - (0.0001831 / 3600.0) * std::pow(T, 2) + (0.00200340 / 3600) * std::pow(T, 3);
 
-  // right ascension and declination delta
+  // right ascension
   double RA = std::atan2(std::sin(LAMBDA * RAD) * std::cos(EPSILON * RAD) - std::tan(BETA * RAD) * std::sin(EPSILON * RAD), std::cos(LAMBDA * RAD)) * DEG;
+  // declination delta
   double Decl = std::asin(std::sin(BETA * RAD) * std::cos(EPSILON * RAD) + std::cos(BETA * RAD) * std::sin(EPSILON * RAD) * std::sin(LAMBDA * RAD)) * DEG;
 
   // if atan is negative, rectify
-  if (RA < 0)
-  {
-    RA += 360;
-  }
+  // if (RA < 0)
+  // {
+  //   RA += 180;
+  // }
 
   RA = constrain(RA);
 
   // sidereal time at greenwich
-  double THETA_0 = 280.46061837 + 360.98564736629 * (JD.JDNow - 2451545.0) + 0.000387933 * std::pow(T, 2) - (1 / 38710000) * std::pow(T, 3);
+  double THETA_0_G = 280.46061837 + 360.98564736629 * (JDNow - 2451545.0) + 0.000387933 * std::pow(T, 2) - (1 / 38710000) * std::pow(T, 3);
 
   // local sideral time at longitude
-  double THETA = THETA_0 - 2.983333;
+  double THETA = THETA_0_G - LONGITUDE;
   // double THETA = THETA_0 + 10;
 
   // local hour angle
@@ -408,16 +511,17 @@ MoonPos getMoonPos()
   TAU = constrain(TAU);
 
   // my latitude;
-  double PHI = 53.400002;
+  double PHI = LATITUDE;
   // double PHI = 50;
 
   double Alt = std::asin(std::sin(PHI * RAD) * std::sin(Decl * RAD) + std::cos(PHI * RAD) * std::cos(Decl * RAD) * std::cos(TAU * RAD)) * DEG;
-  double Az = std::atan2(std::sin(TAU * RAD), std::cos(TAU * RAD) * std::sin(PHI * RAD) - std::tan(Decl * RAD) * std::cos(PHI * RAD)) * DEG;
+  double Az = std::atan2(std::sin(TAU * RAD), std::cos(TAU * RAD) * std::sin(PHI * RAD) - std::tan(Decl * RAD) * std::cos(PHI * RAD)) * DEG + 180;
 
-  if (Az < 0)
-  {
-    Az += 180;
-  }
+  // if (Az < 0)
+  // {
+  //   Az += 360;
+  // }
+  Az = constrain(Az);
 
   // parallax P
   double horP = 8.794 / (DELTA / 149597870);
@@ -433,35 +537,171 @@ MoonPos getMoonPos()
     printf("RA: %lf, Decl: %lf\n", RA, Decl);
     printf("Theta: %lf, Tau: %lf\n", THETA, TAU);
     printf("Distance: %lf, Parallax: %lf\n", DELTA, P);
-    printf("Altitude: %lf, Azimuth: %lf\n", Alt - P, Az);
   }
 
   pos.altitude = Alt - P;
   pos.azimuth = Az;
+  pos.i = i;
+  pos.RA = RA;
+  pos.Decl = Decl;
+  pos.parallax = P;
   return pos;
+}
+
+double getDeltaT()
+{
+  std::time_t unixTime = std::time(nullptr);
+  // get local day, month and year
+  struct std::tm *t = localtime(&unixTime);
+
+  double year = (double)t->tm_year + 1900.0;
+
+  double dt = (year - 2000.0) / 100.0;
+  return 102 + 102 * dt + 25.3 * std::pow(dt, 2) + 0.37 * (year - 2100);
+}
+
+double interpolate(double y1, double y2, double y3, double n)
+{
+  double a = y2 - y1;
+  double b = y3 - y2;
+  double c = b - a;
+  return y2 + (n / 2.0) * (a + b + n * c);
+}
+
+MoonRiseSet getMoonRiseSet(MoonPos pos, JDTime jd_time)
+{
+  MoonRiseSet result;
+  // le constants have arrived
+  const double THETA_0 = jd_time.Sidereal_Midnight;
+  const double P = pos.parallax;
+  const double RA_1 = pos.RA_m1;
+  const double Decl_1 = pos.Decl_m1;
+  const double RA_2 = pos.RA;
+  const double Decl_2 = pos.Decl;
+  const double RA_3 = pos.RA_p1;
+  const double Decl_3 = pos.Decl_p1;
+
+  // geometric altitude
+  double h_0 = 0.7275 * P - (34.0 / 60.0);
+
+  double H_0 = std::acos((std::sin(h_0 * RAD) - std::sin(LATITUDE * RAD) * std::sin(Decl_2 * RAD)) / (std::cos(LATITUDE * RAD) * std::cos(Decl_2 * RAD))) * DEG + 180;
+
+  H_0 = constrain180(H_0);
+
+  // transit
+  double m0 = (RA_2 + LONGITUDE - THETA_0) / 360.0;
+  m0 = constrain1(m0);
+
+  // rise
+  double m1 = m0 - (H_0 / 360.0);
+  m1 = constrain1(m1);
+
+  // set
+  double m2 = m0 + (H_0 / 360.0);
+  m2 = constrain1(m2);
+
+  // corrections
+  double delta_t = getDeltaT();
+
+  double theta_0_m0 = THETA_0 + 360.985657 * m0;
+  double theta_0_m1 = THETA_0 + 360.985657 * m1;
+  double theta_0_m2 = THETA_0 + 360.985657 * m2;
+
+  double n_m0 = m0 + delta_t / 86400.0;
+  double n_m1 = m1 + delta_t / 86400.0;
+  double n_m2 = m2 + delta_t / 86400.0;
+
+  double RA_interp_m0 = interpolate(RA_1, RA_2, RA_3, n_m0);
+  double RA_interp_m1 = interpolate(RA_1, RA_2, RA_3, n_m1);
+  double RA_interp_m2 = interpolate(RA_1, RA_2, RA_3, n_m2);
+
+  double Decl_interp_m1 = interpolate(Decl_1, Decl_2, Decl_3, n_m1);
+  double Decl_interp_m2 = interpolate(Decl_1, Decl_2, Decl_3, n_m2);
+
+  double H_m0 = theta_0_m0 - LONGITUDE - RA_interp_m0;
+  double H_m1 = theta_0_m1 - LONGITUDE - RA_interp_m1;
+  double H_m2 = theta_0_m2 - LONGITUDE - RA_interp_m2;
+
+  double h_m1 = std::asin(std::sin(LATITUDE * RAD) * std::sin(Decl_interp_m1 * RAD) + std::cos(LATITUDE * RAD) * std::sin(Decl_interp_m1 * RAD) * std::cos(H_m1 * RAD)) * DEG;
+  double h_m2 = std::asin(std::sin(LATITUDE * RAD) * std::sin(Decl_interp_m2 * RAD) + std::cos(LATITUDE * RAD) * std::sin(Decl_interp_m2 * RAD) * std::cos(H_m2 * RAD)) * DEG;
+
+  // transit correction
+  double del_m_t = -1 * (H_m0 / 360);
+  m0 += del_m_t;
+
+  // rise set correction TODO: fix later
+  // double del_m1_rs = ((h_m1 - h_0) / (360 * (std::cos(Decl_interp_m1 * RAD) * std::cos(LATITUDE * RAD) * std::sin(H_m1 * RAD) * DEG)));
+  // double del_m2_rs = ((h_m2 - h_0) / (360 * (std::cos(Decl_interp_m2 * RAD) * std::cos(LATITUDE * RAD) * std::sin(H_m2 * RAD)) * DEG));
+
+  // recalc
+  m1 = m0 - (H_0 / 360.0);
+  m2 = m0 + (H_0 / 360.0);
+
+  // m1 += del_m1_rs;
+  // m2 += del_m2_rs;
+
+  m0 = constrain1(m0);
+  m1 = constrain1(m1);
+  m2 = constrain1(m2);
+
+  std::string m0_s = timeDecToString(m0);
+  std::string m1_s = timeDecToString(m1);
+  std::string m2_s = timeDecToString(m2);
+  if (DEBUG)
+  {
+    printf("Transit: %lf, Rise: %lf, Set: %lf\n", m0, m1, m2);
+  }
+  result.transit = m0_s;
+  result.rise = m1_s;
+  result.set = m2_s;
+
+  return result;
 }
 
 Moon getMoonData()
 {
+  JDTime jd_time = julianDate();
+  JDTime jd_time_p1 = julianDate(1);
+  JDTime jd_time_m1 = julianDate(-1);
   Moon data;
   MoonPos pos;
-  const double i = getMoonCoef();
+  MoonPos pos_0;
+  MoonPos pos_p1;
+  MoonPos pos_m1;
+  pos = getMoonPos(jd_time, 0);
+  pos_0 = getMoonPos(jd_time, 1);
+  pos_p1 = getMoonPos(jd_time_p1, 1);
+  pos_m1 = getMoonPos(jd_time_m1, 1);
+
+  // set past and present variables for interpolations
+
+  pos_0.RA_p1 = pos_p1.RA;
+  pos_0.Decl_p1 = pos_p1.Decl;
+  pos_0.RA_m1 = pos_m1.RA;
+  pos_0.Decl_m1 = pos_m1.Decl;
+
+  MoonRiseSet rise_set;
+  rise_set = getMoonRiseSet(pos_0, jd_time);
+
+  const double i = pos.i;
   double d = moonPercent(i);
   std::string phase = getPhase(i, d);
-
-  pos = getMoonPos();
 
   data.perc = d * 100;
   data.phase = phase;
   data.altitude = pos.altitude;
   data.azimuth = pos.azimuth;
+  data.transit = rise_set.transit;
+  data.rise = rise_set.rise;
+  data.set = rise_set.set;
   return data;
 }
 
 int main()
 {
   Moon m = getMoonData();
-  printf("Altitude: %lf, Azimuth: %lf\n", m.altitude, m.azimuth);
+  printf("Transit: %s, Rise: %s, Set: %s\n", m.transit.c_str(), m.rise.c_str(), m.set.c_str());
+  printf("Altitude: %lf\nAzimuth: %lf\n", m.altitude, m.azimuth);
   printf("%lf%%\n%s\n", m.perc, m.phase.c_str());
   return 0;
 }
