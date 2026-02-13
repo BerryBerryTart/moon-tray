@@ -16,6 +16,7 @@
 const double RAD = M_PI / 180.0;
 const double DEG = 180 / M_PI;
 const int DEBUG = 0;
+const int DEBUG_RISE_SET = 0;
 const double LATITUDE = 53.400002;
 const double LONGITUDE = 2.983333;
 
@@ -584,7 +585,7 @@ MoonRiseSet getMoonRiseSet(MoonPos pos, JDTime jd_time)
   // geometric altitude
   double h_0 = 0.7275 * P - (34.0 / 60.0);
 
-  double H_0 = std::acos((std::sin(h_0 * RAD) - std::sin(LATITUDE * RAD) * std::sin(Decl_2 * RAD)) / (std::cos(LATITUDE * RAD) * std::cos(Decl_2 * RAD))) * DEG + 180;
+  double H_0 = std::acos((std::sin(h_0 * RAD) - std::sin(LATITUDE * RAD) * std::sin(Decl_2 * RAD)) / (std::cos(LATITUDE * RAD) * std::cos(Decl_2 * RAD))) * DEG;
 
   H_0 = constrain180(H_0);
 
@@ -622,23 +623,27 @@ MoonRiseSet getMoonRiseSet(MoonPos pos, JDTime jd_time)
   double H_m1 = theta_0_m1 - LONGITUDE - RA_interp_m1;
   double H_m2 = theta_0_m2 - LONGITUDE - RA_interp_m2;
 
-  double h_m1 = std::asin(std::sin(LATITUDE * RAD) * std::sin(Decl_interp_m1 * RAD) + std::cos(LATITUDE * RAD) * std::sin(Decl_interp_m1 * RAD) * std::cos(H_m1 * RAD)) * DEG;
-  double h_m2 = std::asin(std::sin(LATITUDE * RAD) * std::sin(Decl_interp_m2 * RAD) + std::cos(LATITUDE * RAD) * std::sin(Decl_interp_m2 * RAD) * std::cos(H_m2 * RAD)) * DEG;
+  double h_m1 = std::asin(std::sin(LATITUDE * RAD) * std::sin(Decl_interp_m1 * RAD) + std::cos(LATITUDE * RAD) * std::cos(Decl_interp_m1 * RAD) * std::cos(H_m1 * RAD)) * DEG;
+  double h_m2 = std::asin(std::sin(LATITUDE * RAD) * std::sin(Decl_interp_m2 * RAD) + std::cos(LATITUDE * RAD) * std::cos(Decl_interp_m2 * RAD) * std::cos(H_m2 * RAD)) * DEG;
 
   // transit correction
-  double del_m_t = -1 * (H_m0 / 360);
-  m0 += del_m_t;
+  double del_m0 = -1 * (H_m0 / 360);
+  m0 += del_m0;
 
-  // rise set correction TODO: fix later
-  // double del_m1_rs = ((h_m1 - h_0) / (360 * (std::cos(Decl_interp_m1 * RAD) * std::cos(LATITUDE * RAD) * std::sin(H_m1 * RAD) * DEG)));
-  // double del_m2_rs = ((h_m2 - h_0) / (360 * (std::cos(Decl_interp_m2 * RAD) * std::cos(LATITUDE * RAD) * std::sin(H_m2 * RAD)) * DEG));
+  // rise set correction
+  double c1_m1 = std::cos(Decl_interp_m1 * RAD);
+  double c2_m1 = std::cos(LATITUDE * RAD);
+  double s1_m1 = std::sin(H_m1 * RAD);
 
-  // recalc
-  m1 = m0 - (H_0 / 360.0);
-  m2 = m0 + (H_0 / 360.0);
+  double c1_m2 = std::cos(Decl_interp_m2 * RAD);
+  double c2_m2 = std::cos(LATITUDE * RAD);
+  double s1_m2 = std::sin(H_m2 * RAD);
 
-  // m1 += del_m1_rs;
-  // m2 += del_m2_rs;
+  double del_m1 = ((h_m1 - h_0) / (360 * c1_m1 * c2_m1 * s1_m1));
+  double del_m2 = ((h_m2 - h_0) / (360 * c1_m2 * c2_m2 * s1_m2));
+
+  m1 += del_m1;
+  m2 += del_m2;
 
   m0 = constrain1(m0);
   m1 = constrain1(m1);
@@ -647,10 +652,18 @@ MoonRiseSet getMoonRiseSet(MoonPos pos, JDTime jd_time)
   std::string m0_s = timeDecToString(m0);
   std::string m1_s = timeDecToString(m1);
   std::string m2_s = timeDecToString(m2);
-  if (DEBUG)
+  if (DEBUG_RISE_SET)
   {
-    printf("Transit: %lf, Rise: %lf, Set: %lf\n", m0, m1, m2);
+    printf("Transit: %lf, Rise: %lf, Set: %lf\n\n", m0, m1, m2);
+    printf("h_m1: %lf, h_m2: %lf\n", h_m1, h_m2);
+    printf("H_m0: %lf, H_m1: %lf, H_m2: %lf\n", H_m0, H_m1, H_m2);
+    printf("del_m0: %lf, del_m1: %lf, del_m2: %lf\n", del_m0, del_m1, del_m2);
+    printf("RA_1: %lf, RA_2: %lf, RA_3: %lf\n", RA_1, RA_2, RA_3);
+    printf("Decl_1: %lf, Decl_2: %lf, Decl_3: %lf\n", Decl_1, Decl_2, Decl_3);
+    printf("RA_interp_m0: %lf, RA_interp_m1: %lf, RA_interp_m2: %lf\n", RA_interp_m0, RA_interp_m1, RA_interp_m2);
+    printf("Decl_interp_m1: %lf, Decl_interp_m2: %lf\n", Decl_interp_m1, Decl_interp_m2);
   }
+
   result.transit = m0_s;
   result.rise = m1_s;
   result.set = m2_s;
